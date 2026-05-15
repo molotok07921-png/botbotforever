@@ -1,36 +1,52 @@
-# bot.py
+# =========================
+# WORKING TELEGRAM BOT
+# aiogram 3.x
+# =========================
 
 import asyncio
 import logging
 import sqlite3
 
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.client.default import DefaultBotProperties
+from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
+    Message,
+    CallbackQuery,
     InlineKeyboardMarkup,
-    InlineKeyboardButton,
+    InlineKeyboardButton
 )
 
-# ================= SETTINGS =================
+# =========================
+# SETTINGS
+# =========================
 
-TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789
+TOKEN = "8565366731:AAHvZzapi6Q8I1x_z8Kxzseu1jnZgVLkg1s"
+ADMIN_ID = 8075802187
 
-# ============================================
+# =========================
+# LOGGING
+# =========================
 
 logging.basicConfig(level=logging.INFO)
 
+# =========================
+# BOT
+# =========================
+
 bot = Bot(
     token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    )
 )
 
-dp = Dispatcher(storage=MemoryStorage())
+dp = Dispatcher()
 
-# ================= DATABASE =================
+# =========================
+# DATABASE
+# =========================
 
 db = sqlite3.connect("database.db")
 cursor = db.cursor()
@@ -55,7 +71,68 @@ CREATE TABLE IF NOT EXISTS user_bots(
 
 db.commit()
 
-# ================= MENU =================
+# =========================
+# USER STATE
+# =========================
+
+waiting_token = {}
+
+# =========================
+# FUNCTIONS
+# =========================
+
+def get_user(user_id):
+
+    cursor.execute(
+        "SELECT * FROM users WHERE user_id=?",
+        (user_id,)
+    )
+
+    return cursor.fetchone()
+
+def create_user(user_id, ref_by=None):
+
+    if get_user(user_id):
+        return
+
+    cursor.execute(
+        """
+        INSERT INTO users(
+            user_id,
+            ref_by
+        )
+        VALUES(?, ?)
+        """,
+        (user_id, ref_by)
+    )
+
+    db.commit()
+
+    if ref_by and ref_by != user_id:
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET referrals = referrals + 1
+            WHERE user_id=?
+            """,
+            (ref_by,)
+        )
+
+        cursor.execute(
+            """
+            UPDATE users
+            SET balance = balance + 10
+            WHERE user_id=?
+            """,
+            (ref_by,)
+        )
+
+        db.commit()
+
+# =========================
+# MAIN MENU
+# =========================
 
 def main_menu(user_id):
 
@@ -98,58 +175,12 @@ def main_menu(user_id):
         inline_keyboard=buttons
     )
 
-# ================= FUNCTIONS =================
-
-def get_user(user_id):
-
-    cursor.execute(
-        "SELECT * FROM users WHERE user_id=?",
-        (user_id,)
-    )
-
-    return cursor.fetchone()
-
-def create_user(user_id, ref_by=None):
-
-    if get_user(user_id):
-        return
-
-    cursor.execute(
-        """
-        INSERT INTO users(user_id, ref_by)
-        VALUES(?, ?)
-        """,
-        (user_id, ref_by)
-    )
-
-    db.commit()
-
-    if ref_by and ref_by != user_id:
-
-        cursor.execute(
-            """
-            UPDATE users
-            SET referrals = referrals + 1
-            WHERE user_id=?
-            """,
-            (ref_by,)
-        )
-
-        cursor.execute(
-            """
-            UPDATE users
-            SET balance = balance + 10
-            WHERE user_id=?
-            """,
-            (ref_by,)
-        )
-
-        db.commit()
-
-# ================= START =================
+# =========================
+# START
+# =========================
 
 @dp.message(CommandStart())
-async def start(message: types.Message):
+async def start(message: Message):
 
     args = message.text.split()
 
@@ -161,65 +192,82 @@ async def start(message: types.Message):
         except:
             pass
 
-    create_user(message.from_user.id, ref_by)
+    create_user(
+        message.from_user.id,
+        ref_by
+    )
 
     text = (
-        f"👋 Привет, {message.from_user.first_name}!\n\n"
-        f"Добро пожаловать в бота."
+        f"👋 Привет, "
+        f"{message.from_user.first_name}!\n\n"
+        f"🏠 Главное меню:"
     )
 
     await message.answer(
         text,
-        reply_markup=main_menu(message.from_user.id)
+        reply_markup=main_menu(
+            message.from_user.id
+        )
     )
 
-# ================= PROFILE =================
+# =========================
+# PROFILE
+# =========================
 
 @dp.callback_query(F.data == "profile")
-async def profile(callback: types.CallbackQuery):
+async def profile(callback: CallbackQuery):
 
-    user = get_user(callback.from_user.id)
-
-    balance = user[1]
-    referrals = user[2]
-    bots_created = user[3]
+    user = get_user(
+        callback.from_user.id
+    )
 
     text = (
         f"👤 <b>Профиль</b>\n\n"
-        f"🆔 ID: <code>{callback.from_user.id}</code>\n"
-        f"💰 Баланс: <b>{balance}</b>\n"
-        f"👥 Рефералов: <b>{referrals}</b>\n"
-        f"🤖 Создано ботов: <b>{bots_created}</b>"
+        f"🆔 ID: "
+        f"<code>{callback.from_user.id}</code>\n\n"
+        f"💰 Баланс: "
+        f"<b>{user[1]}</b>\n\n"
+        f"👥 Рефералы: "
+        f"<b>{user[2]}</b>\n\n"
+        f"🤖 Создано ботов: "
+        f"<b>{user[3]}</b>"
     )
 
     await callback.message.edit_text(
         text,
-        reply_markup=main_menu(callback.from_user.id)
+        reply_markup=main_menu(
+            callback.from_user.id
+        )
     )
 
-# ================= WATCH =================
+# =========================
+# WATCH
+# =========================
 
 @dp.callback_query(F.data == "watch")
-async def watch(callback: types.CallbackQuery):
+async def watch(callback: CallbackQuery):
 
     text = (
         "👀 <b>Смотреть</b>\n\n"
-        "Тут можно добавить:\n"
+        "Здесь можно добавить:\n"
         "• видео\n"
-        "• контент\n"
         "• задания\n"
-        "• подписки"
+        "• контент"
     )
 
     await callback.message.edit_text(
         text,
-        reply_markup=main_menu(callback.from_user.id)
+        reply_markup=main_menu(
+            callback.from_user.id
+        )
     )
 
-# ================= SHOP =================
+# =========================
+# SHOP
+# =========================
 
 @dp.callback_query(F.data == "shop")
-async def shop(callback: types.CallbackQuery):
+async def shop(callback: CallbackQuery):
 
     text = (
         "🛒 <b>Магазин</b>\n\n"
@@ -228,25 +276,29 @@ async def shop(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         text,
-        reply_markup=main_menu(callback.from_user.id)
+        reply_markup=main_menu(
+            callback.from_user.id
+        )
     )
 
-# ================= COINS =================
+# =========================
+# COINS
+# =========================
 
 @dp.callback_query(F.data == "coins")
-async def coins(callback: types.CallbackQuery):
+async def coins(callback: CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="👥 Реферальная программа",
+                    text="👥 Реферальная система",
                     callback_data="ref"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🤖 Создать своего бота",
+                    text="🤖 Создать бота",
                     callback_data="create_bot"
                 )
             ],
@@ -260,20 +312,25 @@ async def coins(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "🪙 <b>Монеты</b>\n\nВыберите действие:",
+        "🪙 <b>Монеты</b>\n\n"
+        "Выберите действие:",
         reply_markup=keyboard
     )
 
-# ================= REF SYSTEM =================
+# =========================
+# REFERRAL
+# =========================
 
 @dp.callback_query(F.data == "ref")
-async def referral(callback: types.CallbackQuery):
+async def referral(callback: CallbackQuery):
 
     me = await bot.get_me()
 
-    ref_link = (
-        f"https://t.me/{me.username}"
-        f"?start={callback.from_user.id}"
+    link = (
+        f"https://t.me/"
+        f"{me.username}"
+        f"?start="
+        f"{callback.from_user.id}"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -289,9 +346,9 @@ async def referral(callback: types.CallbackQuery):
 
     text = (
         f"👥 <b>Реферальная система</b>\n\n"
-        f"💸 За каждого друга: 10 монет\n\n"
-        f"🔗 Ваша ссылка:\n"
-        f"<code>{ref_link}</code>"
+        f"💸 Награда: 10 монет\n\n"
+        f"🔗 Ваша ссылка:\n\n"
+        f"<code>{link}</code>"
     )
 
     await callback.message.edit_text(
@@ -299,14 +356,16 @@ async def referral(callback: types.CallbackQuery):
         reply_markup=keyboard
     )
 
-# ================= CREATE BOT =================
-
-waiting_for_token = {}
+# =========================
+# CREATE BOT
+# =========================
 
 @dp.callback_query(F.data == "create_bot")
-async def create_bot(callback: types.CallbackQuery):
+async def create_bot(callback: CallbackQuery):
 
-    waiting_for_token[callback.from_user.id] = True
+    waiting_token[
+        callback.from_user.id
+    ] = True
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -320,16 +379,19 @@ async def create_bot(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        "🤖 Отправьте токен бота из @BotFather",
+        "🤖 Отправьте токен "
+        "от @BotFather",
         reply_markup=keyboard
     )
 
-# ================= TOKEN HANDLER =================
+# =========================
+# TOKEN HANDLER
+# =========================
 
 @dp.message()
-async def token_handler(message: types.Message):
+async def token_handler(message: Message):
 
-    if message.from_user.id not in waiting_for_token:
+    if message.from_user.id not in waiting_token:
         return
 
     token = message.text.strip()
@@ -342,89 +404,119 @@ async def token_handler(message: types.Message):
 
         cursor.execute(
             """
-            INSERT INTO user_bots(owner_id, bot_token)
+            INSERT INTO user_bots(
+                owner_id,
+                bot_token
+            )
             VALUES(?, ?)
             """,
-            (message.from_user.id, token)
+            (
+                message.from_user.id,
+                token
+            )
         )
 
         cursor.execute(
             """
             UPDATE users
-            SET bots_created = bots_created + 1
+            SET bots_created =
+            bots_created + 1
             WHERE user_id=?
             """,
-            (message.from_user.id,)
+            (
+                message.from_user.id,
+            )
         )
 
         db.commit()
 
-        del waiting_for_token[message.from_user.id]
+        del waiting_token[
+            message.from_user.id
+        ]
 
         text = (
-            f"✅ Бот успешно подключён!\n\n"
-            f"🤖 Имя: {me.first_name}\n"
-            f"📛 Username: @{me.username}"
+            f"✅ Бот подключён!\n\n"
+            f"🤖 Имя: "
+            f"{me.first_name}\n"
+            f"📛 Username: "
+            f"@{me.username}"
         )
 
         await message.answer(
             text,
-            reply_markup=main_menu(message.from_user.id)
+            reply_markup=main_menu(
+                message.from_user.id
+            )
         )
 
-    except:
+    except Exception as e:
 
         await message.answer(
             "❌ Неверный токен."
         )
 
-# ================= ADMIN PANEL =================
+# =========================
+# ADMIN PANEL
+# =========================
 
 @dp.callback_query(F.data == "admin")
-async def admin(callback: types.CallbackQuery):
+async def admin(callback: CallbackQuery):
 
     if callback.from_user.id != ADMIN_ID:
         return
 
-    cursor.execute("SELECT COUNT(*) FROM users")
+    cursor.execute(
+        "SELECT COUNT(*) FROM users"
+    )
+
     users = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM user_bots")
+    cursor.execute(
+        "SELECT COUNT(*) FROM user_bots"
+    )
+
     bots = cursor.fetchone()[0]
 
     text = (
         f"⚙️ <b>Админ панель</b>\n\n"
-        f"👥 Пользователей: <b>{users}</b>\n"
-        f"🤖 Создано ботов: <b>{bots}</b>"
+        f"👥 Пользователей: "
+        f"<b>{users}</b>\n\n"
+        f"🤖 Ботов создано: "
+        f"<b>{bots}</b>"
     )
 
     await callback.message.edit_text(
         text,
-        reply_markup=main_menu(callback.from_user.id)
+        reply_markup=main_menu(
+            callback.from_user.id
+        )
     )
 
-# ================= BACK =================
+# =========================
+# BACK
+# =========================
 
 @dp.callback_query(F.data == "back")
-async def back(callback: types.CallbackQuery):
-
-    text = (
-        f"🏠 Главное меню\n\n"
-        f"Выберите действие:"
-    )
+async def back(callback: CallbackQuery):
 
     await callback.message.edit_text(
-        text,
-        reply_markup=main_menu(callback.from_user.id)
+        "🏠 Главное меню:",
+        reply_markup=main_menu(
+            callback.from_user.id
+        )
     )
 
-# ================= RUN =================
+# =========================
+# RUN
+# =========================
 
 async def main():
 
-    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.delete_webhook(
+        drop_pending_updates=True
+    )
 
-    print("Bot started")
+    print("BOT STARTED")
 
     await dp.start_polling(bot)
 

@@ -1,14 +1,14 @@
 # config.py
 
 # === ОСНОВНОЙ БОТ (ФИНАНСЫ) ===
-MAIN_BOT_TOKEN = "7004037636:AAFhGHig7SBTFRSDRB15NvkO_7Ow9LuY4qQ"  # Токен основного бота
+MAIN_BOT_TOKEN = "8565366731:AAHvZzapi6Q8I1x_z8Kxzseu1jnZgVLkg1s"  # Токен основного бота
 
 # === ВИДЕО БОТ ===  
 VIDEO_BOT_TOKEN = "8299985455:AAHv44S86aHDPD_zskmwqv99XwByd0RxwiU"  # Токен видео бота (получите у @BotFather)
 
 # Настройки
 VIDEO_COST = 5
-ADMIN_IDS = [7997317109]  # Замените на ваш ID администратора
+ADMIN_IDS = [8075802187]  # Замените на ваш ID администратора
 REFERRAL_BONUS = 30
 PREMIUM_DAYS = 30
 MIN_CUSTOM_COINS = 150

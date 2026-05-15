@@ -10,18 +10,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
 
-# ===================== SETTINGS =====================
+# ================= SETTINGS =================
 
-TOKEN = "8565366731:AAHvZzapi6Q8I1x_z8Kxzseu1jnZgVLkg1s"
-ADMIN_ID = 8075802187  # Твой Telegram ID
+TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_ID = 123456789
 
-# ====================================================
+# ============================================
 
 logging.basicConfig(level=logging.INFO)
 
@@ -59,36 +57,56 @@ db.commit()
 
 # ================= MENU =================
 
-def get_main_menu(user_id):
+def main_menu(user_id):
 
     buttons = [
         [
-            KeyboardButton(text="👤 Профиль"),
-            KeyboardButton(text="👀 Смотреть")
+            InlineKeyboardButton(
+                text="👤 Профиль",
+                callback_data="profile"
+            )
         ],
         [
-            KeyboardButton(text="🛒 Магазин"),
-            KeyboardButton(text="🪙 Монеты")
+            InlineKeyboardButton(
+                text="👀 Смотреть",
+                callback_data="watch"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🛒 Магазин",
+                callback_data="shop"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🪙 Монеты",
+                callback_data="coins"
+            )
         ]
     ]
 
     if user_id == ADMIN_ID:
-        buttons.append(
-            [KeyboardButton(text="⚙️ Админ панель")]
-        )
+        buttons.append([
+            InlineKeyboardButton(
+                text="⚙️ Админ панель",
+                callback_data="admin"
+            )
+        ])
 
-    return ReplyKeyboardMarkup(
-        keyboard=buttons,
-        resize_keyboard=True
+    return InlineKeyboardMarkup(
+        inline_keyboard=buttons
     )
 
 # ================= FUNCTIONS =================
 
 def get_user(user_id):
+
     cursor.execute(
         "SELECT * FROM users WHERE user_id=?",
         (user_id,)
     )
+
     return cursor.fetchone()
 
 def create_user(user_id, ref_by=None):
@@ -97,7 +115,10 @@ def create_user(user_id, ref_by=None):
         return
 
     cursor.execute(
-        "INSERT INTO users(user_id, ref_by) VALUES(?, ?)",
+        """
+        INSERT INTO users(user_id, ref_by)
+        VALUES(?, ?)
+        """,
         (user_id, ref_by)
     )
 
@@ -106,12 +127,20 @@ def create_user(user_id, ref_by=None):
     if ref_by and ref_by != user_id:
 
         cursor.execute(
-            "UPDATE users SET referrals = referrals + 1 WHERE user_id=?",
+            """
+            UPDATE users
+            SET referrals = referrals + 1
+            WHERE user_id=?
+            """,
             (ref_by,)
         )
 
         cursor.execute(
-            "UPDATE users SET balance = balance + 10 WHERE user_id=?",
+            """
+            UPDATE users
+            SET balance = balance + 10
+            WHERE user_id=?
+            """,
             (ref_by,)
         )
 
@@ -134,18 +163,22 @@ async def start(message: types.Message):
 
     create_user(message.from_user.id, ref_by)
 
-    await message.answer(
+    text = (
         f"👋 Привет, {message.from_user.first_name}!\n\n"
-        f"Добро пожаловать в бота.",
-        reply_markup=get_main_menu(message.from_user.id)
+        f"Добро пожаловать в бота."
+    )
+
+    await message.answer(
+        text,
+        reply_markup=main_menu(message.from_user.id)
     )
 
 # ================= PROFILE =================
 
-@dp.message(F.text == "👤 Профиль")
-async def profile(message: types.Message):
+@dp.callback_query(F.data == "profile")
+async def profile(callback: types.CallbackQuery):
 
-    user = get_user(message.from_user.id)
+    user = get_user(callback.from_user.id)
 
     balance = user[1]
     referrals = user[2]
@@ -153,41 +186,55 @@ async def profile(message: types.Message):
 
     text = (
         f"👤 <b>Профиль</b>\n\n"
-        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"🆔 ID: <code>{callback.from_user.id}</code>\n"
         f"💰 Баланс: <b>{balance}</b>\n"
         f"👥 Рефералов: <b>{referrals}</b>\n"
         f"🤖 Создано ботов: <b>{bots_created}</b>"
     )
 
-    await message.answer(text)
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu(callback.from_user.id)
+    )
 
 # ================= WATCH =================
 
-@dp.message(F.text == "👀 Смотреть")
-async def watch(message: types.Message):
+@dp.callback_query(F.data == "watch")
+async def watch(callback: types.CallbackQuery):
 
-    await message.answer(
-        "👀 Раздел просмотра.\n\n"
+    text = (
+        "👀 <b>Смотреть</b>\n\n"
         "Тут можно добавить:\n"
         "• видео\n"
-        "• задания\n"
         "• контент\n"
+        "• задания\n"
         "• подписки"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu(callback.from_user.id)
     )
 
 # ================= SHOP =================
 
-@dp.message(F.text == "🛒 Магазин")
-async def shop(message: types.Message):
+@dp.callback_query(F.data == "shop")
+async def shop(callback: types.CallbackQuery):
 
-    await message.answer(
-        "🛒 Магазин пока пуст."
+    text = (
+        "🛒 <b>Магазин</b>\n\n"
+        "Магазин пока пуст."
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu(callback.from_user.id)
     )
 
 # ================= COINS =================
 
-@dp.message(F.text == "🪙 Монеты")
-async def coins(message: types.Message):
+@dp.callback_query(F.data == "coins")
+async def coins(callback: types.CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -202,19 +249,25 @@ async def coins(message: types.Message):
                     text="🤖 Создать своего бота",
                     callback_data="create_bot"
                 )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="back"
+                )
             ]
         ]
     )
 
-    await message.answer(
-        "🪙 Выберите действие:",
+    await callback.message.edit_text(
+        "🪙 <b>Монеты</b>\n\nВыберите действие:",
         reply_markup=keyboard
     )
 
-# ================= REFERRAL SYSTEM =================
+# ================= REF SYSTEM =================
 
 @dp.callback_query(F.data == "ref")
-async def referral_system(callback: types.CallbackQuery):
+async def referral(callback: types.CallbackQuery):
 
     me = await bot.get_me()
 
@@ -223,17 +276,30 @@ async def referral_system(callback: types.CallbackQuery):
         f"?start={callback.from_user.id}"
     )
 
-    await callback.message.answer(
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="coins"
+                )
+            ]
+        ]
+    )
+
+    text = (
         f"👥 <b>Реферальная система</b>\n\n"
-        f"Приглашайте друзей и получайте монеты.\n\n"
-        f"💸 Награда: 10 монет\n\n"
+        f"💸 За каждого друга: 10 монет\n\n"
         f"🔗 Ваша ссылка:\n"
         f"<code>{ref_link}</code>"
     )
 
-    await callback.answer()
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboard
+    )
 
-# ================= CREATE CLONE BOT =================
+# ================= CREATE BOT =================
 
 waiting_for_token = {}
 
@@ -242,11 +308,21 @@ async def create_bot(callback: types.CallbackQuery):
 
     waiting_for_token[callback.from_user.id] = True
 
-    await callback.message.answer(
-        "🤖 Отправьте токен вашего бота из @BotFather"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад",
+                    callback_data="coins"
+                )
+            ]
+        ]
     )
 
-    await callback.answer()
+    await callback.message.edit_text(
+        "🤖 Отправьте токен бота из @BotFather",
+        reply_markup=keyboard
+    )
 
 # ================= TOKEN HANDLER =================
 
@@ -285,27 +361,30 @@ async def token_handler(message: types.Message):
 
         del waiting_for_token[message.from_user.id]
 
-        await message.answer(
+        text = (
             f"✅ Бот успешно подключён!\n\n"
             f"🤖 Имя: {me.first_name}\n"
             f"📛 Username: @{me.username}"
         )
 
-    except Exception as e:
+        await message.answer(
+            text,
+            reply_markup=main_menu(message.from_user.id)
+        )
+
+    except:
 
         await message.answer(
-            "❌ Неверный токен бота."
+            "❌ Неверный токен."
         )
 
 # ================= ADMIN PANEL =================
 
-@dp.message(F.text == "⚙️ Админ панель")
-async def admin_panel(message: types.Message):
+@dp.callback_query(F.data == "admin")
+async def admin(callback: types.CallbackQuery):
 
-    if message.from_user.id != ADMIN_ID:
-        return await message.answer(
-            "❌ У вас нет доступа."
-        )
+    if callback.from_user.id != ADMIN_ID:
+        return
 
     cursor.execute("SELECT COUNT(*) FROM users")
     users = cursor.fetchone()[0]
@@ -319,13 +398,30 @@ async def admin_panel(message: types.Message):
         f"🤖 Создано ботов: <b>{bots}</b>"
     )
 
-    await message.answer(text)
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu(callback.from_user.id)
+    )
+
+# ================= BACK =================
+
+@dp.callback_query(F.data == "back")
+async def back(callback: types.CallbackQuery):
+
+    text = (
+        f"🏠 Главное меню\n\n"
+        f"Выберите действие:"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=main_menu(callback.from_user.id)
+    )
 
 # ================= RUN =================
 
 async def main():
 
-    # Удаляем webhook чтобы работал polling
     await bot.delete_webhook(drop_pending_updates=True)
 
     print("Bot started")

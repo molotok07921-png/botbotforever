@@ -1,886 +1,286 @@
 # bot.py
+# Telegram bot with:
+# - Profile
+# - Admin panel
+# - Watch
+# - Shop
+# - Coins
+# - Referral system
+# - User-created clone bots
 
-import asyncio
+import sqlite3
 import logging
-import time
-import requests
-import aiosqlite
-
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
-from aiogram.client.default import DefaultBotProperties
-
 from aiogram.types import (
-    Message,
-    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
 )
+from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.memory import MemoryStorage
+import asyncio
 
-# ======================================
-# CONFIG
-# ======================================
-
-TOKEN = "TOKEN"
-ADMIN_ID = 123456789
-
-YOOMONEY_TOKEN = "YOOMONEY_API_TOKEN"
-YOOMONEY_RECEIVER = "4100111111111111"
-
-# ======================================
-# LOGGING
-# ======================================
+TOKEN = "YOUR_BOT_TOKEN"
+ADMIN_ID = 123456789  # your telegram id
 
 logging.basicConfig(level=logging.INFO)
 
-# ======================================
-# BOT
-# ======================================
-
 bot = Bot(
     token=TOKEN,
-
-    default=DefaultBotProperties(
-        parse_mode=ParseMode.HTML
-    )
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
-# ======================================
-# DATABASE
-# ======================================
+# ================= DATABASE =================
 
-async def init_db():
+db = sqlite3.connect("database.db")
+cursor = db.cursor()
 
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users(
+    user_id INTEGER PRIMARY KEY,
+    balance INTEGER DEFAULT 0,
+    referrals INTEGER DEFAULT 0,
+    bots_created INTEGER DEFAULT 0,
+    ref_by INTEGER
+)
+""")
 
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS user_bots(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER,
+    bot_token TEXT
+)
+""")
 
-            user_id INTEGER PRIMARY KEY,
+db.commit()
 
-            username TEXT,
-            first_name TEXT,
+# ================= MENU =================
 
-            coins INTEGER DEFAULT 0,
-
-            premium INTEGER DEFAULT 0,
-
-            referrals INTEGER DEFAULT 0,
-
-            invited_by INTEGER,
-
-            bots_created INTEGER DEFAULT 0
-        )
-        """)
-
-        await db.execute("""
-        CREATE TABLE IF NOT EXISTS user_bots (
-
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            owner_id INTEGER,
-
-            bot_token TEXT,
-            bot_username TEXT
-        )
-        """)
-
-        await db.commit()
-
-
-# ======================================
-# USER
-# ======================================
-
-async def add_user(user):
-
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
-
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE user_id = ?",
-            (user.id,)
-        )
-
-        check = await cursor.fetchone()
-
-        if not check:
-
-            await db.execute("""
-            INSERT INTO users (
-
-                user_id,
-                username,
-                first_name,
-                coins
-
-            )
-
-            VALUES (?, ?, ?, ?)
-            """, (
-
-                user.id,
-                user.username,
-                user.first_name,
-                50
-
-            ))
-
-            await db.commit()
-
-
-async def get_user(user_id):
-
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
-
-        cursor = await db.execute(
-            "SELECT * FROM users WHERE user_id = ?",
-            (user_id,)
-        )
-
-        return await cursor.fetchone()
-
-
-# ======================================
-# REFERRAL SYSTEM
-# ======================================
-
-async def activate_referral(
-    user_id,
-    ref_id
-):
-
-    if user_id == ref_id:
-        return
-
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
-
-        cursor = await db.execute("""
-        SELECT invited_by
-        FROM users
-        WHERE user_id = ?
-        """, (user_id,))
-
-        data = await cursor.fetchone()
-
-        if data and data[0]:
-            return
-
-        await db.execute("""
-        UPDATE users
-        SET invited_by = ?
-        WHERE user_id = ?
-        """, (
-
-            ref_id,
-            user_id
-
-        ))
-
-        await db.execute("""
-        UPDATE users
-
-        SET
-
-            referrals = referrals + 1,
-            coins = coins + 25
-
-        WHERE user_id = ?
-        """, (ref_id,))
-
-        await db.commit()
-
-
-# ======================================
-# MENU
-# ======================================
-
-def menu(user_id):
-
-    keyboard = [
-
+menu = ReplyKeyboardMarkup(
+    keyboard=[
         [
-            InlineKeyboardButton(
-                text="👤 Профиль",
-                callback_data="profile"
-            ),
-
-            InlineKeyboardButton(
-                text="💎 Premium",
-                callback_data="premium"
-            )
+            KeyboardButton(text="👤 Профиль"),
+            KeyboardButton(text="👀 Смотреть")
         ],
-
         [
-            InlineKeyboardButton(
-                text="🤖 Создать бота",
-                callback_data="create_bot"
-            )
+            KeyboardButton(text="🛒 Магазин"),
+            KeyboardButton(text="🪙 Монеты")
         ],
-
         [
-            InlineKeyboardButton(
-                text="👥 Рефералы",
-                callback_data="referrals"
-            ),
-
-            InlineKeyboardButton(
-                text="💰 Купить монеты",
-                callback_data="buy_coins"
-            )
+            KeyboardButton(text="⚙️ Админ панель")
         ]
-    ]
+    ],
+    resize_keyboard=True
+)
 
-    if user_id == ADMIN_ID:
+# ================= FUNCTIONS =================
 
-        keyboard.append([
+def get_user(user_id):
+    cursor.execute(
+        "SELECT * FROM users WHERE user_id=?",
+        (user_id,)
+    )
+    return cursor.fetchone()
 
-            InlineKeyboardButton(
-                text="📊 Статистика",
-                callback_data="admin_stats"
+def create_user(user_id, ref_by=None):
+    if not get_user(user_id):
+        cursor.execute(
+            "INSERT INTO users(user_id, ref_by) VALUES(?, ?)",
+            (user_id, ref_by)
+        )
+        db.commit()
+
+        if ref_by and ref_by != user_id:
+            cursor.execute(
+                "UPDATE users SET referrals = referrals + 1, balance = balance + 10 WHERE user_id=?",
+                (ref_by,)
             )
+            db.commit()
 
-        ])
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=keyboard
-    )
-
-
-# ======================================
-# YOOMONEY
-# ======================================
-
-pending_payments = {}
-
-
-def create_yoomoney_payment(
-    amount,
-    user_id,
-    description
-):
-
-    label = (
-        f"user_"
-        f"{user_id}_"
-        f"{int(time.time())}"
-    )
-
-    pay_url = (
-        "https://yoomoney.ru/quickpay/confirm.xml?"
-        f"receiver={YOOMONEY_RECEIVER}"
-        "&quickpay-form=shop"
-        f"&targets={description}"
-        f"&sum={amount}"
-        "&paymentType=SB"
-        f"&label={label}"
-    )
-
-    return {
-
-        "payment_id": label,
-        "pay_url": pay_url
-
-    }
-
-
-def check_yoomoney_payment(
-    payment_label
-):
-
-    headers = {
-
-        "Authorization":
-        f"Bearer {YOOMONEY_TOKEN}",
-
-        "Content-Type":
-        "application/x-www-form-urlencoded"
-    }
-
-    response = requests.post(
-
-        "https://yoomoney.ru/api/operation-history",
-
-        headers=headers,
-
-        data={
-            "label": payment_label,
-            "records": 10
-        }
-
-    )
-
-    if response.status_code != 200:
-        return False
-
-    data = response.json()
-
-    operations = data.get(
-        "operations",
-        []
-    )
-
-    for operation in operations:
-
-        if (
-            operation.get("label")
-            == payment_label
-        ):
-
-            if (
-                operation.get("status")
-                == "success"
-            ):
-
-                return True
-
-    return False
-
-
-# ======================================
-# START
-# ======================================
+# ================= START =================
 
 @dp.message(CommandStart())
-async def start(message: Message):
+async def start(message: types.Message):
 
     args = message.text.split()
 
-    await add_user(
-        message.from_user
-    )
+    ref_by = None
 
     if len(args) > 1:
+        try:
+            ref_by = int(args[1])
+        except:
+            pass
 
-        ref_arg = args[1]
-
-        if ref_arg.startswith("ref_"):
-
-            ref_id = int(
-                ref_arg.split("_")[1]
-            )
-
-            await activate_referral(
-
-                message.from_user.id,
-                ref_id
-
-            )
-
-    text = f"""
-<b>Minimal Panel</b>
-
-Добро пожаловать,
-{message.from_user.first_name}
-"""
+    create_user(message.from_user.id, ref_by)
 
     await message.answer(
-
-        text,
-
-        reply_markup=menu(
-            message.from_user.id
-        )
+        f"👋 Привет, {message.from_user.first_name}!\n\n"
+        f"Это многофункциональный бот.",
+        reply_markup=menu
     )
 
+# ================= PROFILE =================
 
-# ======================================
-# PROFILE
-# ======================================
+@dp.message(F.text == "👤 Профиль")
+async def profile(message: types.Message):
 
-@dp.callback_query(F.data == "profile")
-async def profile(callback: CallbackQuery):
+    user = get_user(message.from_user.id)
 
-    user = await get_user(
-        callback.from_user.id
+    balance = user[1]
+    referrals = user[2]
+    bots_created = user[3]
+
+    text = (
+        f"👤 <b>Ваш профиль</b>\n\n"
+        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"💰 Баланс: <b>{balance}</b>\n"
+        f"👥 Рефералов: <b>{referrals}</b>\n"
+        f"🤖 Создано ботов: <b>{bots_created}</b>"
     )
 
-    premium = (
-        "Да"
-        if user[4]
-        else "Нет"
+    await message.answer(text)
+
+# ================= WATCH =================
+
+@dp.message(F.text == "👀 Смотреть")
+async def watch(message: types.Message):
+    await message.answer(
+        "🎬 Раздел просмотра.\n"
+        "Тут можно добавить видео, посты или задания."
     )
 
-    text = f"""
-<b>Профиль</b>
+# ================= SHOP =================
 
-🆔 ID:
-<code>{user[0]}</code>
-
-💰 Монеты:
-{user[3]}
-
-💎 Premium:
-{premium}
-
-👥 Рефералы:
-{user[5]}
-
-🤖 Ботов:
-{user[7]}
-"""
-
-    await callback.message.edit_text(
-
-        text,
-
-        reply_markup=menu(
-            callback.from_user.id
-        )
+@dp.message(F.text == "🛒 Магазин")
+async def shop(message: types.Message):
+    await message.answer(
+        "🛒 Магазин пока пуст."
     )
 
+# ================= COINS =================
 
-# ======================================
-# REFERRALS
-# ======================================
+@dp.message(F.text == "🪙 Монеты")
+async def coins(message: types.Message):
 
-@dp.callback_query(F.data == "referrals")
-async def referrals(callback: CallbackQuery):
-
-    me = await bot.get_me()
-
-    ref_link = (
-        f"https://t.me/"
-        f"{me.username}"
-        f"?start=ref_"
-        f"{callback.from_user.id}"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👥 Реферальная программа",
+                    callback_data="ref"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🤖 Создать своего бота",
+                    callback_data="create_bot"
+                )
+            ]
+        ]
     )
 
-    user = await get_user(
-        callback.from_user.id
+    await message.answer(
+        "🪙 Выберите действие:",
+        reply_markup=keyboard
     )
 
-    text = f"""
-<b>Реферальная система</b>
+# ================= REF SYSTEM =================
 
-👥 Приглашено:
-{user[5]}
+@dp.callback_query(F.data == "ref")
+async def ref_system(callback: types.CallbackQuery):
 
-🎁 Награда:
-+25 монет
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={callback.from_user.id}"
 
-🔗 Ссылка:
-
-<code>{ref_link}</code>
-"""
-
-    await callback.message.edit_text(
-
-        text,
-
-        reply_markup=menu(
-            callback.from_user.id
-        )
+    await callback.message.answer(
+        f"👥 <b>Реферальная программа</b>\n\n"
+        f"Приглашайте друзей и получайте монеты.\n\n"
+        f"🔗 Ваша ссылка:\n<code>{ref_link}</code>"
     )
 
-
-# ======================================
-# CREATE BOT
-# ======================================
+# ================= CREATE BOT =================
 
 waiting_token = {}
 
 @dp.callback_query(F.data == "create_bot")
-async def create_bot(callback: CallbackQuery):
+async def create_clone(callback: types.CallbackQuery):
 
-    waiting_token[
-        callback.from_user.id
-    ] = True
+    waiting_token[callback.from_user.id] = True
 
-    text = """
-<b>Создание бота</b>
-
-1. Создай бота через @BotFather
-2. Отправь токен сюда
-"""
-
-    await callback.message.edit_text(
-        text
+    await callback.message.answer(
+        "🤖 Отправьте токен вашего бота из @BotFather"
     )
-
 
 @dp.message()
-async def token_handler(message: Message):
+async def token_handler(message: types.Message):
 
-    if (
-        message.from_user.id
-        not in waiting_token
-    ):
-        return
+    if message.from_user.id in waiting_token:
 
-    token = message.text.strip()
+        token = message.text.strip()
 
-    try:
+        try:
+            test_bot = Bot(token=token)
+            me = await test_bot.get_me()
 
-        temp_bot = Bot(token=token)
-
-        me = await temp_bot.get_me()
-
-        async with aiosqlite.connect(
-            "database.db"
-        ) as db:
-
-            await db.execute("""
-            INSERT INTO user_bots (
-
-                owner_id,
-                bot_token,
-                bot_username
-
+            cursor.execute(
+                "INSERT INTO user_bots(owner_id, bot_token) VALUES(?, ?)",
+                (message.from_user.id, token)
             )
 
-            VALUES (?, ?, ?)
-            """, (
-
-                message.from_user.id,
-                token,
-                me.username
-
-            ))
-
-            await db.execute("""
-            UPDATE users
-
-            SET
-
-                bots_created =
-                bots_created + 1,
-
-                coins =
-                coins + 10
-
-            WHERE user_id = ?
-            """, (
-
-                message.from_user.id,
-            ))
-
-            await db.commit()
-
-        del waiting_token[
-            message.from_user.id
-        ]
-
-        text = f"""
-✅ Бот добавлен
-
-🤖 @{me.username}
-
-💰 +10 монет
-"""
-
-        await message.answer(
-
-            text,
-
-            reply_markup=menu(
-                message.from_user.id
+            cursor.execute(
+                "UPDATE users SET bots_created = bots_created + 1 WHERE user_id=?",
+                (message.from_user.id,)
             )
-        )
 
-    except:
+            db.commit()
 
-        await message.answer(
-            "❌ Неверный токен"
-        )
+            del waiting_token[message.from_user.id]
 
+            await message.answer(
+                f"✅ Бот успешно подключён!\n\n"
+                f"🤖 Имя: {me.first_name}\n"
+                f"📛 Username: @{me.username}"
+            )
 
-# ======================================
-# PREMIUM
-# ======================================
+        except Exception as e:
 
-@dp.callback_query(F.data == "premium")
-async def premium(callback: CallbackQuery):
+            await message.answer(
+                "❌ Неверный токен."
+            )
 
-    payment = create_yoomoney_payment(
+# ================= ADMIN PANEL =================
 
-        amount=199,
+@dp.message(F.text == "⚙️ Админ панель")
+async def admin_panel(message: types.Message):
 
-        user_id=callback.from_user.id,
+    if message.from_user.id != ADMIN_ID:
+        return await message.answer("❌ Нет доступа.")
 
-        description="Premium"
+    cursor.execute("SELECT COUNT(*) FROM users")
+    users = cursor.fetchone()[0]
 
+    cursor.execute("SELECT COUNT(*) FROM user_bots")
+    bots = cursor.fetchone()[0]
+
+    text = (
+        f"⚙️ <b>Админ панель</b>\n\n"
+        f"👥 Пользователей: <b>{users}</b>\n"
+        f"🤖 Создано ботов: <b>{bots}</b>"
     )
 
-    pending_payments[
-        payment["payment_id"]
-    ] = {
+    await message.answer(text)
 
-        "user_id":
-        callback.from_user.id,
-
-        "type":
-        "premium"
-    }
-
-    keyboard = InlineKeyboardMarkup(
-
-        inline_keyboard=[
-
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить",
-                    url=payment["pay_url"]
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="🔄 Проверить оплату",
-                    callback_data=
-                    f"check_{payment['payment_id']}"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-
-        """
-💎 Premium
-
-199₽
-""",
-
-        reply_markup=keyboard
-    )
-
-
-# ======================================
-# BUY COINS
-# ======================================
-
-@dp.callback_query(F.data == "buy_coins")
-async def buy_coins(callback: CallbackQuery):
-
-    payment = create_yoomoney_payment(
-
-        amount=99,
-
-        user_id=callback.from_user.id,
-
-        description="500 coins"
-
-    )
-
-    pending_payments[
-        payment["payment_id"]
-    ] = {
-
-        "user_id":
-        callback.from_user.id,
-
-        "type":
-        "coins",
-
-        "coins":
-        500
-    }
-
-    keyboard = InlineKeyboardMarkup(
-
-        inline_keyboard=[
-
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить",
-                    url=payment["pay_url"]
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    text="🔄 Проверить оплату",
-                    callback_data=
-                    f"check_{payment['payment_id']}"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-
-        """
-💰 500 монет
-
-99₽
-""",
-
-        reply_markup=keyboard
-    )
-
-
-# ======================================
-# CHECK PAYMENT
-# ======================================
-
-@dp.callback_query(
-    F.data.startswith("check_")
-)
-async def check_payment(
-    callback: CallbackQuery
-):
-
-    payment_id = (
-        callback.data
-        .replace("check_", "")
-    )
-
-    payment = pending_payments.get(
-        payment_id
-    )
-
-    if not payment:
-
-        await callback.answer(
-
-            "Платёж не найден",
-
-            show_alert=True
-        )
-
-        return
-
-    status = check_yoomoney_payment(
-        payment_id
-    )
-
-    if not status:
-
-        await callback.answer(
-
-            "Оплата пока не найдена",
-
-            show_alert=True
-        )
-
-        return
-
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
-
-        # PREMIUM
-        if payment["type"] == "premium":
-
-            await db.execute("""
-            UPDATE users
-
-            SET premium = 1
-
-            WHERE user_id = ?
-            """, (
-
-                payment["user_id"],
-            ))
-
-        # COINS
-        if payment["type"] == "coins":
-
-            await db.execute("""
-            UPDATE users
-
-            SET coins = coins + ?
-
-            WHERE user_id = ?
-            """, (
-
-                payment["coins"],
-                payment["user_id"]
-
-            ))
-
-        await db.commit()
-
-    del pending_payments[
-        payment_id
-    ]
-
-    await callback.message.edit_text(
-        "✅ Оплата подтверждена"
-    )
-
-
-# ======================================
-# ADMIN STATS
-# ======================================
-
-@dp.callback_query(
-    F.data == "admin_stats"
-)
-async def admin_stats(
-    callback: CallbackQuery
-):
-
-    if (
-        callback.from_user.id
-        != ADMIN_ID
-    ):
-        return
-
-    async with aiosqlite.connect(
-        "database.db"
-    ) as db:
-
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM users"
-        )
-
-        users = (
-            await cursor.fetchone()
-        )[0]
-
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM user_bots"
-        )
-
-        bots = (
-            await cursor.fetchone()
-        )[0]
-
-    text = f"""
-<b>Статистика</b>
-
-👤 Пользователей:
-{users}
-
-🤖 Ботов:
-{bots}
-"""
-
-    await callback.message.edit_text(
-
-        text,
-
-        reply_markup=menu(
-            callback.from_user.id
-        )
-    )
-
-
-# ======================================
-# MAIN
-# ======================================
+# ================= RUN =================
 
 async def main():
-
-    await init_db()
-
-    print("BOT STARTED")
-
+    print("Bot started")
     await dp.start_polling(bot)
 
-
 if __name__ == "__main__":
-
     asyncio.run(main())

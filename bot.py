@@ -18,8 +18,8 @@ from aiogram.types import (
 
 # ===================== SETTINGS =====================
 
-TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789  # Твой Telegram ID
+TOKEN = "8565366731:AAHvZzapi6Q8I1x_z8Kxzseu1jnZgVLkg1s"
+ADMIN_ID = 8075802187  # Твой Telegram ID
 
 # ====================================================
 

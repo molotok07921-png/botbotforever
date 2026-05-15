@@ -23,8 +23,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 import asyncio
 
-TOKEN = "YOUR_BOT_TOKEN"
-ADMIN_ID = 123456789  # your telegram id
+TOKEN = "8565366731:AAHvZzapi6Q8I1x_z8Kxzseu1jnZgVLkg1s"
+ADMIN_ID = 8075802187  # your telegram id
 
 logging.basicConfig(level=logging.INFO)
 

@@ -15,8 +15,8 @@ from aiogram.types import (
 )
 from aiogram.client.default import DefaultBotProperties
 
-TOKEN = "ТОКЕН_БОТА"
-ADMIN_ID = 123456789  # твой telegram id
+TOKEN = "8780318044:AAG9e3XO3dUi6IZCO34B8DYsvQY3Umq_BXQ"
+ADMIN_ID = 8210163551  # твой telegram id
 
 bot = Bot(
     token=TOKEN,

@@ -1,51 +1,90 @@
-# requirements:
-# pip install aiogram aiosqlite python-dotenv
+# bot.py
 
 import asyncio
 import logging
+import time
+import requests
 import aiosqlite
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
+from aiogram.client.default import DefaultBotProperties
+
 from aiogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
-from aiogram.client.default import DefaultBotProperties
 
-TOKEN = "8780318044:AAG9e3XO3dUi6IZCO34B8DYsvQY3Umq_BXQ"
-ADMIN_ID = 8210163551  # твой telegram id
+# ======================================
+# CONFIG
+# ======================================
+
+TOKEN = "TOKEN"
+ADMIN_ID = 123456789
+
+YOOMONEY_TOKEN = "YOOMONEY_API_TOKEN"
+YOOMONEY_RECEIVER = "4100111111111111"
+
+# ======================================
+# LOGGING
+# ======================================
+
+logging.basicConfig(level=logging.INFO)
+
+# ======================================
+# BOT
+# ======================================
 
 bot = Bot(
     token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    )
 )
 
 dp = Dispatcher()
 
-# ---------------- БАЗА ДАННЫХ ---------------- #
+# ======================================
+# DATABASE
+# ======================================
 
 async def init_db():
-    async with aiosqlite.connect("database.db") as db:
 
-        # пользователи
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
+
             user_id INTEGER PRIMARY KEY,
+
             username TEXT,
             first_name TEXT,
+
             coins INTEGER DEFAULT 0,
+
+            premium INTEGER DEFAULT 0,
+
+            referrals INTEGER DEFAULT 0,
+
+            invited_by INTEGER,
+
             bots_created INTEGER DEFAULT 0
         )
         """)
 
-        # созданные боты
         await db.execute("""
         CREATE TABLE IF NOT EXISTS user_bots (
+
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+
             owner_id INTEGER,
+
             bot_token TEXT,
             bot_username TEXT
         )
@@ -54,39 +93,53 @@ async def init_db():
         await db.commit()
 
 
-async def add_user(user_id, username, first_name):
-    async with aiosqlite.connect("database.db") as db:
+# ======================================
+# USER
+# ======================================
+
+async def add_user(user):
+
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
 
         cursor = await db.execute(
             "SELECT * FROM users WHERE user_id = ?",
-            (user_id,)
+            (user.id,)
         )
 
-        user = await cursor.fetchone()
+        check = await cursor.fetchone()
 
-        if not user:
+        if not check:
+
             await db.execute("""
             INSERT INTO users (
+
                 user_id,
                 username,
                 first_name,
-                coins,
-                bots_created
+                coins
+
             )
-            VALUES (?, ?, ?, ?, ?)
+
+            VALUES (?, ?, ?, ?)
             """, (
-                user_id,
-                username,
-                first_name,
-                100,
-                0
+
+                user.id,
+                user.username,
+                user.first_name,
+                50
+
             ))
 
             await db.commit()
 
 
 async def get_user(user_id):
-    async with aiosqlite.connect("database.db") as db:
+
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
 
         cursor = await db.execute(
             "SELECT * FROM users WHERE user_id = ?",
@@ -96,303 +149,728 @@ async def get_user(user_id):
         return await cursor.fetchone()
 
 
-# ---------------- КНОПКИ ---------------- #
+# ======================================
+# REFERRAL SYSTEM
+# ======================================
 
-def main_menu():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+async def activate_referral(
+    user_id,
+    ref_id
+):
 
-            [
-                InlineKeyboardButton(
-                    text="👤 Профиль",
-                    callback_data="profile"
-                ),
+    if user_id == ref_id:
+        return
 
-                InlineKeyboardButton(
-                    text="🛍 Магазин",
-                    callback_data="shop"
-                )
-            ],
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
 
-            [
-                InlineKeyboardButton(
-                    text="🚫 Галерея",
-                    callback_data="gallery"
-                )
-            ],
+        cursor = await db.execute("""
+        SELECT invited_by
+        FROM users
+        WHERE user_id = ?
+        """, (user_id,))
 
-            [
-                InlineKeyboardButton(
-                    text="🤖 Создать бота (+10✨)",
-                    callback_data="create_bot"
-                )
-            ],
+        data = await cursor.fetchone()
 
-            [
-                InlineKeyboardButton(
-                    text="🔥 Халява (+50✨)",
-                    callback_data="bonus"
-                )
-            ]
+        if data and data[0]:
+            return
+
+        await db.execute("""
+        UPDATE users
+        SET invited_by = ?
+        WHERE user_id = ?
+        """, (
+
+            ref_id,
+            user_id
+
+        ))
+
+        await db.execute("""
+        UPDATE users
+
+        SET
+
+            referrals = referrals + 1,
+            coins = coins + 25
+
+        WHERE user_id = ?
+        """, (ref_id,))
+
+        await db.commit()
+
+
+# ======================================
+# MENU
+# ======================================
+
+def menu(user_id):
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                text="👤 Профиль",
+                callback_data="profile"
+            ),
+
+            InlineKeyboardButton(
+                text="💎 Premium",
+                callback_data="premium"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                text="🤖 Создать бота",
+                callback_data="create_bot"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                text="👥 Рефералы",
+                callback_data="referrals"
+            ),
+
+            InlineKeyboardButton(
+                text="💰 Купить монеты",
+                callback_data="buy_coins"
+            )
         ]
+    ]
+
+    if user_id == ADMIN_ID:
+
+        keyboard.append([
+
+            InlineKeyboardButton(
+                text="📊 Статистика",
+                callback_data="admin_stats"
+            )
+
+        ])
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=keyboard
     )
 
 
-def admin_panel():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+# ======================================
+# YOOMONEY
+# ======================================
 
-            [
-                InlineKeyboardButton(
-                    text="📊 Статистика",
-                    callback_data="admin_stats"
-                )
-            ],
+pending_payments = {}
 
-            [
-                InlineKeyboardButton(
-                    text="💰 Выдать монеты",
-                    callback_data="admin_give_coins"
-                )
-            ]
-        ]
+
+def create_yoomoney_payment(
+    amount,
+    user_id,
+    description
+):
+
+    label = (
+        f"user_"
+        f"{user_id}_"
+        f"{int(time.time())}"
     )
 
+    pay_url = (
+        "https://yoomoney.ru/quickpay/confirm.xml?"
+        f"receiver={YOOMONEY_RECEIVER}"
+        "&quickpay-form=shop"
+        f"&targets={description}"
+        f"&sum={amount}"
+        "&paymentType=SB"
+        f"&label={label}"
+    )
 
-# ---------------- START ---------------- #
+    return {
+
+        "payment_id": label,
+        "pay_url": pay_url
+
+    }
+
+
+def check_yoomoney_payment(
+    payment_label
+):
+
+    headers = {
+
+        "Authorization":
+        f"Bearer {YOOMONEY_TOKEN}",
+
+        "Content-Type":
+        "application/x-www-form-urlencoded"
+    }
+
+    response = requests.post(
+
+        "https://yoomoney.ru/api/operation-history",
+
+        headers=headers,
+
+        data={
+            "label": payment_label,
+            "records": 10
+        }
+
+    )
+
+    if response.status_code != 200:
+        return False
+
+    data = response.json()
+
+    operations = data.get(
+        "operations",
+        []
+    )
+
+    for operation in operations:
+
+        if (
+            operation.get("label")
+            == payment_label
+        ):
+
+            if (
+                operation.get("status")
+                == "success"
+            ):
+
+                return True
+
+    return False
+
+
+# ======================================
+# START
+# ======================================
 
 @dp.message(CommandStart())
 async def start(message: Message):
 
+    args = message.text.split()
+
     await add_user(
-        message.from_user.id,
-        message.from_user.username,
-        message.from_user.first_name
+        message.from_user
     )
 
-    text = f"""
-<b>Добро пожаловать в Bot Panel</b>
+    if len(args) > 1:
 
-Выберите нужный раздел ниже 👇
+        ref_arg = args[1]
+
+        if ref_arg.startswith("ref_"):
+
+            ref_id = int(
+                ref_arg.split("_")[1]
+            )
+
+            await activate_referral(
+
+                message.from_user.id,
+                ref_id
+
+            )
+
+    text = f"""
+<b>Minimal Panel</b>
+
+Добро пожаловать,
+{message.from_user.first_name}
 """
 
     await message.answer(
+
         text,
-        reply_markup=main_menu()
+
+        reply_markup=menu(
+            message.from_user.id
+        )
     )
 
 
-# ---------------- ПРОФИЛЬ ---------------- #
+# ======================================
+# PROFILE
+# ======================================
 
 @dp.callback_query(F.data == "profile")
 async def profile(callback: CallbackQuery):
 
-    user = await get_user(callback.from_user.id)
+    user = await get_user(
+        callback.from_user.id
+    )
+
+    premium = (
+        "Да"
+        if user[4]
+        else "Нет"
+    )
 
     text = f"""
-<b>👤 Ваш профиль</b>
+<b>Профиль</b>
 
-🆔 ID: <code>{user[0]}</code>
-👤 Имя: {user[2]}
-💎 Монеты: {user[3]}
-🤖 Создано ботов: {user[4]}
+🆔 ID:
+<code>{user[0]}</code>
+
+💰 Монеты:
+{user[3]}
+
+💎 Premium:
+{premium}
+
+👥 Рефералы:
+{user[5]}
+
+🤖 Ботов:
+{user[7]}
 """
 
     await callback.message.edit_text(
+
         text,
-        reply_markup=main_menu()
+
+        reply_markup=menu(
+            callback.from_user.id
+        )
     )
 
 
-# ---------------- БОНУС ---------------- #
+# ======================================
+# REFERRALS
+# ======================================
 
-@dp.callback_query(F.data == "bonus")
-async def bonus(callback: CallbackQuery):
+@dp.callback_query(F.data == "referrals")
+async def referrals(callback: CallbackQuery):
 
-    async with aiosqlite.connect("database.db") as db:
+    me = await bot.get_me()
 
-        await db.execute("""
-        UPDATE users
-        SET coins = coins + 50
-        WHERE user_id = ?
-        """, (callback.from_user.id,))
+    ref_link = (
+        f"https://t.me/"
+        f"{me.username}"
+        f"?start=ref_"
+        f"{callback.from_user.id}"
+    )
 
-        await db.commit()
+    user = await get_user(
+        callback.from_user.id
+    )
 
-    await callback.answer(
-        "Вы получили +50 монет",
-        show_alert=True
+    text = f"""
+<b>Реферальная система</b>
+
+👥 Приглашено:
+{user[5]}
+
+🎁 Награда:
++25 монет
+
+🔗 Ссылка:
+
+<code>{ref_link}</code>
+"""
+
+    await callback.message.edit_text(
+
+        text,
+
+        reply_markup=menu(
+            callback.from_user.id
+        )
     )
 
 
-# ---------------- СОЗДАНИЕ БОТА ---------------- #
+# ======================================
+# CREATE BOT
+# ======================================
 
-user_waiting_token = {}
-
+waiting_token = {}
 
 @dp.callback_query(F.data == "create_bot")
 async def create_bot(callback: CallbackQuery):
 
-    user_waiting_token[callback.from_user.id] = True
+    waiting_token[
+        callback.from_user.id
+    ] = True
 
     text = """
-<b>🤖 Создание бота</b>
+<b>Создание бота</b>
 
 1. Создай бота через @BotFather
 2. Отправь токен сюда
-
-Пример:
-<code>123456:ABC...</code>
 """
 
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(
+        text
+    )
 
 
 @dp.message()
-async def get_token(message: Message):
+async def token_handler(message: Message):
 
-    if message.from_user.id not in user_waiting_token:
+    if (
+        message.from_user.id
+        not in waiting_token
+    ):
         return
 
     token = message.text.strip()
 
     try:
-        test_bot = Bot(token=token)
 
-        me = await test_bot.get_me()
+        temp_bot = Bot(token=token)
 
-        async with aiosqlite.connect("database.db") as db:
+        me = await temp_bot.get_me()
+
+        async with aiosqlite.connect(
+            "database.db"
+        ) as db:
 
             await db.execute("""
             INSERT INTO user_bots (
+
                 owner_id,
                 bot_token,
                 bot_username
+
             )
+
             VALUES (?, ?, ?)
             """, (
+
                 message.from_user.id,
                 token,
                 me.username
+
             ))
 
             await db.execute("""
             UPDATE users
+
             SET
-                coins = coins + 10,
-                bots_created = bots_created + 1
+
+                bots_created =
+                bots_created + 1,
+
+                coins =
+                coins + 10
+
             WHERE user_id = ?
-            """, (message.from_user.id,))
+            """, (
+
+                message.from_user.id,
+            ))
 
             await db.commit()
 
-        del user_waiting_token[message.from_user.id]
+        del waiting_token[
+            message.from_user.id
+        ]
 
         text = f"""
-✅ Бот успешно добавлен
+✅ Бот добавлен
 
-🤖 Username: @{me.username}
+🤖 @{me.username}
 
-💎 Вам начислено +10 монет
+💰 +10 монет
 """
 
         await message.answer(
+
             text,
-            reply_markup=main_menu()
+
+            reply_markup=menu(
+                message.from_user.id
+            )
         )
 
-    except Exception:
+    except:
 
         await message.answer(
             "❌ Неверный токен"
         )
 
 
-# ---------------- МАГАЗИН ---------------- #
+# ======================================
+# PREMIUM
+# ======================================
 
-@dp.callback_query(F.data == "shop")
-async def shop(callback: CallbackQuery):
+@dp.callback_query(F.data == "premium")
+async def premium(callback: CallbackQuery):
 
-    text = """
-🛍 <b>Магазин</b>
+    payment = create_yoomoney_payment(
 
-Тут можно добавить:
-• VIP
-• Покупку монет
-• Подписки
-"""
+        amount=199,
+
+        user_id=callback.from_user.id,
+
+        description="Premium"
+
+    )
+
+    pending_payments[
+        payment["payment_id"]
+    ] = {
+
+        "user_id":
+        callback.from_user.id,
+
+        "type":
+        "premium"
+    }
+
+    keyboard = InlineKeyboardMarkup(
+
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить",
+                    url=payment["pay_url"]
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🔄 Проверить оплату",
+                    callback_data=
+                    f"check_{payment['payment_id']}"
+                )
+            ]
+        ]
+    )
 
     await callback.message.edit_text(
-        text,
-        reply_markup=main_menu()
+
+        """
+💎 Premium
+
+199₽
+""",
+
+        reply_markup=keyboard
     )
 
 
-# ---------------- ГАЛЕРЕЯ ---------------- #
+# ======================================
+# BUY COINS
+# ======================================
 
-@dp.callback_query(F.data == "gallery")
-async def gallery(callback: CallbackQuery):
+@dp.callback_query(F.data == "buy_coins")
+async def buy_coins(callback: CallbackQuery):
 
-    text = """
-🚫 <b>Галерея</b>
+    payment = create_yoomoney_payment(
 
-Тут будет список созданных ботов.
-"""
+        amount=99,
+
+        user_id=callback.from_user.id,
+
+        description="500 coins"
+
+    )
+
+    pending_payments[
+        payment["payment_id"]
+    ] = {
+
+        "user_id":
+        callback.from_user.id,
+
+        "type":
+        "coins",
+
+        "coins":
+        500
+    }
+
+    keyboard = InlineKeyboardMarkup(
+
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить",
+                    url=payment["pay_url"]
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🔄 Проверить оплату",
+                    callback_data=
+                    f"check_{payment['payment_id']}"
+                )
+            ]
+        ]
+    )
 
     await callback.message.edit_text(
-        text,
-        reply_markup=main_menu()
+
+        """
+💰 500 монет
+
+99₽
+""",
+
+        reply_markup=keyboard
     )
 
 
-# ---------------- АДМИН ПАНЕЛЬ ---------------- #
+# ======================================
+# CHECK PAYMENT
+# ======================================
 
-@dp.message(F.text == "/admin")
-async def admin(message: Message):
+@dp.callback_query(
+    F.data.startswith("check_")
+)
+async def check_payment(
+    callback: CallbackQuery
+):
 
-    if message.from_user.id != ADMIN_ID:
+    payment_id = (
+        callback.data
+        .replace("check_", "")
+    )
+
+    payment = pending_payments.get(
+        payment_id
+    )
+
+    if not payment:
+
+        await callback.answer(
+
+            "Платёж не найден",
+
+            show_alert=True
+        )
+
         return
 
-    await message.answer(
-        "⚙ Админ панель",
-        reply_markup=admin_panel()
+    status = check_yoomoney_payment(
+        payment_id
+    )
+
+    if not status:
+
+        await callback.answer(
+
+            "Оплата пока не найдена",
+
+            show_alert=True
+        )
+
+        return
+
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
+
+        # PREMIUM
+        if payment["type"] == "premium":
+
+            await db.execute("""
+            UPDATE users
+
+            SET premium = 1
+
+            WHERE user_id = ?
+            """, (
+
+                payment["user_id"],
+            ))
+
+        # COINS
+        if payment["type"] == "coins":
+
+            await db.execute("""
+            UPDATE users
+
+            SET coins = coins + ?
+
+            WHERE user_id = ?
+            """, (
+
+                payment["coins"],
+                payment["user_id"]
+
+            ))
+
+        await db.commit()
+
+    del pending_payments[
+        payment_id
+    ]
+
+    await callback.message.edit_text(
+        "✅ Оплата подтверждена"
     )
 
 
-@dp.callback_query(F.data == "admin_stats")
-async def admin_stats(callback: CallbackQuery):
+# ======================================
+# ADMIN STATS
+# ======================================
 
-    if callback.from_user.id != ADMIN_ID:
+@dp.callback_query(
+    F.data == "admin_stats"
+)
+async def admin_stats(
+    callback: CallbackQuery
+):
+
+    if (
+        callback.from_user.id
+        != ADMIN_ID
+    ):
         return
 
-    async with aiosqlite.connect("database.db") as db:
+    async with aiosqlite.connect(
+        "database.db"
+    ) as db:
 
         cursor = await db.execute(
             "SELECT COUNT(*) FROM users"
         )
 
-        users_count = (await cursor.fetchone())[0]
+        users = (
+            await cursor.fetchone()
+        )[0]
 
         cursor = await db.execute(
             "SELECT COUNT(*) FROM user_bots"
         )
 
-        bots_count = (await cursor.fetchone())[0]
+        bots = (
+            await cursor.fetchone()
+        )[0]
 
     text = f"""
-📊 <b>Статистика</b>
+<b>Статистика</b>
 
-👤 Пользователей: {users_count}
-🤖 Ботов создано: {bots_count}
+👤 Пользователей:
+{users}
+
+🤖 Ботов:
+{bots}
 """
 
     await callback.message.edit_text(
+
         text,
-        reply_markup=admin_panel()
+
+        reply_markup=menu(
+            callback.from_user.id
+        )
     )
 
 
-# ---------------- ЗАПУСК ---------------- #
+# ======================================
+# MAIN
+# ======================================
 
 async def main():
 
@@ -404,5 +882,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+
     asyncio.run(main())
